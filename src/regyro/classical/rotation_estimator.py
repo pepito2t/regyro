@@ -5,6 +5,7 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 
 from regyro.lens_profile import LensProfile
+from regyro.errors import RegyroError
 
 MAX_FEATURES = 400
 FEATURE_QUALITY = 0.01
@@ -15,7 +16,7 @@ RANSAC_INLIER_ANGLE_RAD = 0.004
 RANSAC_SAMPLE_SIZE = 3
 
 
-class RotationEstimationError(Exception):
+class RotationEstimationError(RegyroError):
     pass
 
 

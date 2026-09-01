@@ -1,5 +1,4 @@
 import logging
-from dataclasses import dataclass
 from pathlib import Path
 
 import cv2
@@ -10,6 +9,8 @@ from regyro.classical.rotation_estimator import (
     estimate_frame_pair,
 )
 from regyro.lens_profile import LensProfile
+from regyro.result import GyroEstimate
+from regyro.errors import RegyroError
 
 logger = logging.getLogger(__name__)
 
@@ -17,15 +18,21 @@ ANALYSIS_WIDTH = 960
 RANDOM_SEED = 42
 
 
-class VideoError(Exception):
+class VideoError(RegyroError):
     pass
 
 
-@dataclass
-class GyroEstimate:
-    angular_velocities: np.ndarray
-    sample_rate_hz: float
-    failed_pairs: int
+def read_frame_rate(video_path: Path | str) -> float:
+    capture = cv2.VideoCapture(str(video_path))
+    if not capture.isOpened():
+        raise VideoError(f"cannot open video {video_path}")
+    try:
+        fps = capture.get(cv2.CAP_PROP_FPS)
+    finally:
+        capture.release()
+    if fps <= 0:
+        raise VideoError(f"invalid frame rate in {video_path}")
+    return float(fps)
 
 
 def _read_gray_frames(video_path: Path | str):
@@ -66,7 +73,11 @@ def _fill_failed_pairs(rotation_vectors: list[np.ndarray | None]) -> tuple[np.nd
     return filled, failed
 
 
-def estimate_gyro(video_path: Path | str, profile: LensProfile) -> GyroEstimate:
+def estimate_gyro(
+    video_path: Path | str,
+    profile: LensProfile,
+    max_frames: int | None = None,
+) -> GyroEstimate:
     """Estimate per-frame angular velocities (rad/s, camera frame) for a whole video."""
     fps, frames = _read_gray_frames(video_path)
     rng = np.random.default_rng(RANDOM_SEED)
@@ -74,6 +85,8 @@ def estimate_gyro(video_path: Path | str, profile: LensProfile) -> GyroEstimate:
     rotation_vectors: list[np.ndarray | None] = []
     prev_gray = None
     for frame_index, gray in enumerate(frames):
+        if max_frames is not None and frame_index >= max_frames:
+            break
         if prev_gray is not None:
             try:
                 result = estimate_frame_pair(prev_gray, gray, profile, rng)
@@ -82,6 +95,7 @@ def estimate_gyro(video_path: Path | str, profile: LensProfile) -> GyroEstimate:
                 logger.warning("frame %d: %s", frame_index, exc)
                 rotation_vectors.append(None)
         prev_gray = gray
+    frames.close()
 
     if not rotation_vectors:
         raise VideoError(f"video {video_path} has fewer than 2 frames")

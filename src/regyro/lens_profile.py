@@ -4,9 +4,10 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+from regyro.errors import RegyroError
 
 
-class LensProfileError(Exception):
+class LensProfileError(RegyroError):
     pass
 
 

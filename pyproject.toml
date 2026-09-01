@@ -15,8 +15,9 @@ dependencies = [
 regyro = "regyro.cli:main"
 
 [project.optional-dependencies]
+# torch 2.8 dropped Pascal (sm_61) kernels — the training box is a GTX 1080 Ti.
 ml = [
-    "torch>=2.4",
+    "torch>=2.4,<2.8",
 ]
 
 [dependency-groups]

@@ -11,7 +11,7 @@ from regyro.model.augment import (
     apply_motion_blur,
     apply_noise,
     apply_prop_mask,
-    roll_pair,
+    roll_images,
 )
 from regyro.model.network import TARGET_SCALE_RAD_S
 from regyro.errors import RegyroError
@@ -65,14 +65,16 @@ def split_shards_by_video(shard_dir: Path, val_fraction: float, seed: int = 0) -
 
 
 def _augment(
-    frame_a: np.ndarray,
-    frame_b: np.ndarray,
+    frames: list[np.ndarray],
+    mask: np.ndarray,
     target: np.ndarray,
     rng: np.random.Generator,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[list[np.ndarray], np.ndarray, np.ndarray]:
     if rng.random() < ROLL_PROBABILITY:
-        frame_a, frame_b, target = roll_pair(frame_a, frame_b, target, rng.uniform(-180.0, 180.0))
-    frames = [frame_a, frame_b]
+        rolled, target = roll_images([*frames, mask], target, rng.uniform(-180.0, 180.0))
+        frames, mask = rolled[:2], rolled[2]
+    # Photometric augmentations touch the frames only: the mask records where sensor
+    # data exists, which occlusion and exposure do not change.
     if rng.random() < EXPOSURE_PROBABILITY:
         frames = apply_exposure(frames, rng)
     if rng.random() < BLUR_PROBABILITY:
@@ -81,13 +83,15 @@ def _augment(
         frames = apply_prop_mask(frames, rng)
     if rng.random() < NOISE_PROBABILITY:
         frames = apply_noise(frames, rng)
-    return frames[0], frames[1], target
+    return frames, mask, target
 
 
 def _to_tensors(
-    frame_a: np.ndarray, frame_b: np.ndarray, target: np.ndarray
+    frames: list[np.ndarray], mask: np.ndarray, target: np.ndarray
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    stacked = np.stack([frame_a, frame_b]).astype(np.float32) / 127.5 - 1.0
+    images = np.stack(frames).astype(np.float32) / 127.5 - 1.0
+    mask_plane = (mask.astype(np.float32) / 255.0)[None, ...]
+    stacked = np.concatenate([images, mask_plane], axis=0)
     return (
         torch.from_numpy(stacked),
         torch.from_numpy((target / TARGET_SCALE_RAD_S).astype(np.float32)),
@@ -130,14 +134,16 @@ class ShardDataset(IterableDataset):
                 with np.load(shard) as payload:
                     frames = payload["frames"]
                     targets = payload["angular_velocity"]
+                    mask = payload["valid_mask"]
             except (OSError, ValueError, KeyError) as exc:
                 logger.warning("skipping unreadable shard %s: %s", shard.name, exc)
                 continue
 
             for pair in rng.permutation(len(targets)):
                 pair = int(pair)
-                frame_a, frame_b = frames[pair], frames[pair + 1]
+                pair_frames = [frames[pair], frames[pair + 1]]
+                pair_mask = mask
                 target = targets[pair].astype(np.float64)
                 if self.augment:
-                    frame_a, frame_b, target = _augment(frame_a, frame_b, target, rng)
-                yield _to_tensors(frame_a, frame_b, target)
+                    pair_frames, pair_mask, target = _augment(pair_frames, mask, target, rng)
+                yield _to_tensors(pair_frames, pair_mask, target)

@@ -6,6 +6,8 @@ from torch import nn
 TARGET_SCALE_RAD_S = 5.0
 
 STAGE_CHANNELS = (64, 96, 128, 192, 256)
+# Two consecutive frames plus the canonical validity mask.
+INPUT_CHANNELS = 3
 
 
 class ResidualBlock(nn.Module):
@@ -37,15 +39,17 @@ class ResidualBlock(nn.Module):
 class RotationNet(nn.Module):
     """Predicts camera angular velocity from a pair of canonically projected frames.
 
-    The two frames enter as channels rather than through a siamese encoder: the
-    network only needs their difference, and early fusion keeps it small enough
-    to train on a single mid-range GPU.
+    Input channels are (frame, next frame, validity mask). The two frames enter as
+    channels rather than through a siamese encoder: the network only needs their
+    difference, and early fusion keeps it small enough to train on a single
+    mid-range GPU. The mask tells it which pixels carry sensor data, which differs
+    per camera once footage from several datasets is mixed.
     """
 
-    def __init__(self, in_frames: int = 2) -> None:
+    def __init__(self, in_channels: int = INPUT_CHANNELS) -> None:
         super().__init__()
         self.stem = nn.Sequential(
-            nn.Conv2d(in_frames, STAGE_CHANNELS[0], 7, 2, 3, bias=False),
+            nn.Conv2d(in_channels, STAGE_CHANNELS[0], 7, 2, 3, bias=False),
             nn.BatchNorm2d(STAGE_CHANNELS[0]),
             nn.ReLU(inplace=True),
         )

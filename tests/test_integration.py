@@ -71,6 +71,10 @@ def test_build_produces_aligned_frames_and_targets(tmp_path, lens, constant_gyro
     shard = next((tmp_path / "shards").glob("*.npz"))
     with np.load(shard) as payload:
         frames, targets = payload["frames"], payload["angular_velocity"]
+        mask = payload["valid_mask"]
+
+    assert mask.shape == (CANONICAL_SIZE, CANONICAL_SIZE)
+    assert mask.dtype == np.uint8
 
     assert frames.shape == (FRAME_COUNT, CANONICAL_SIZE, CANONICAL_SIZE)
     assert targets.shape == (FRAME_COUNT - 1, 3)

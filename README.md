@@ -22,6 +22,10 @@ uv run regyro calibrate flight.mp4 --lens lens-profile.json
 # Build training shards from clips that still have gyro
 uv run regyro build-dataset rushes/*.mp4 --lens lens-profile.json -o data/shards
 
+# Add public research datasets to the same shard directory
+uv run regyro import-dataset euroc/MH_01/ --format asl -o data/shards
+uv run regyro import-dataset uzh/*.bag --format rosbag --calibration camchain.yaml -o data/shards
+
 # Train
 uv run regyro train --data data/shards -o model.pt --epochs 30
 
@@ -31,7 +35,9 @@ uv run python scripts/evaluate.py flight.mp4 --lens lens-profile.json
 
 ## Design notes
 
-**Canonical projection.** Every frame is remapped onto a fixed 140° equidistant fisheye before it reaches the network. Without this, the same pixel motion would mean different rotations depending on the camera's focal length and distortion, and GoPro, DJI and public datasets could not share a model.
+**Canonical projection.** Every frame is remapped onto a fixed 140° equidistant fisheye before it reaches the network. Without this, the same pixel motion would mean different rotations depending on the camera's focal length and distortion, and GoPro, DJI and public datasets could not share a model. A validity mask travels with each shard as a third input channel, so the network can tell a narrow lens's empty periphery from genuinely dark image content.
+
+**Public datasets.** Two importers cover what research datasets actually ship: the ASL/EuRoC directory layout (EuRoC MAV, TUM-VI) and ROS bags (UZH-FPV, Blackbird), the latter read through the pure-Python `rosbags` package so no ROS install is needed. Both rotate the gyro into the camera frame using the dataset's own extrinsics — an arbitrary rotation, not the axis swap that action cameras happen to use.
 
 **Synchronisation.** The IMU clock and the image clock disagree. `calibrate` cross-correlates motion magnitude from the classical estimator against the embedded gyro to recover the offset, then brute-forces the axis permutation and signs. Clips whose residual stays too high are skipped rather than turned into mislabelled training data.
 
@@ -46,7 +52,7 @@ The training box is a GTX 1080 Ti (Pascal, sm_61). PyTorch 2.8 dropped Pascal ke
 ## Development
 
 ```bash
-uv sync --extra ml
+uv sync --extra ml --extra datasets
 uv run pytest
 ```
 

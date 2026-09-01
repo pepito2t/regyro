@@ -76,6 +76,21 @@ class GyroSamples:
     def remap_axes(self, mapping: AxisMapping) -> "GyroSamples":
         return GyroSamples(self.timestamps, mapping.apply(self.angular_velocity))
 
+    def rotate(self, rotation_matrix: np.ndarray) -> "GyroSamples":
+        """Express the rates in another frame.
+
+        Camera-to-IMU extrinsics from public datasets are arbitrary rotations, not
+        the axis swaps that action cameras happen to use.
+        """
+        matrix = np.asarray(rotation_matrix, dtype=np.float64)
+        if matrix.shape != (3, 3):
+            raise TelemetryError(f"expected a 3x3 rotation matrix, got {matrix.shape}")
+        return GyroSamples(self.timestamps, self.angular_velocity @ matrix.T)
+
+    @property
+    def duration_s(self) -> tuple[float, float]:
+        return float(self.timestamps[0]), float(self.timestamps[-1])
+
 
 def load_gyro(video_path: Path | str) -> GyroSamples:
     """Read embedded IMU telemetry (GoPro GPMF, DJI, Insta360, ...) from a video."""
@@ -123,6 +138,8 @@ def integrate_between_frames(
 
     starts = frame_times[:-1] + time_offset_s
     durations = np.diff(frame_times)
+    if np.any(durations <= 0):
+        raise TelemetryError("frame timestamps must be strictly increasing")
     steps = INTEGRATION_STEPS_PER_FRAME
     step_durations = durations / steps
 

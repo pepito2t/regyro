@@ -5,8 +5,8 @@ import cv2
 import numpy as np
 import torch
 
-from regyro.classical.video_pipeline import VideoError, read_frame_rate
 from regyro.dataset.canonical import CANONICAL_FOV_DEG, CANONICAL_SIZE, CanonicalProjector
+from regyro.dataset.frame_source import FrameSourceError, VideoFrameSource
 from regyro.lens_profile import LensProfile
 from regyro.model.network import TARGET_SCALE_RAD_S, RotationNet
 from regyro.model.train import select_device
@@ -42,9 +42,18 @@ def load_model(checkpoint_path: Path, device: torch.device) -> tuple[RotationNet
     return model, checkpoint
 
 
-def _predict_batch(model: RotationNet, pairs: list[np.ndarray], device: torch.device) -> np.ndarray:
-    stacked = np.stack(pairs).astype(np.float32) / 127.5 - 1.0
-    tensor = torch.from_numpy(stacked).to(device)
+def _predict_batch(
+    model: RotationNet,
+    pairs: list[np.ndarray],
+    mask: np.ndarray,
+    device: torch.device,
+) -> np.ndarray:
+    images = np.stack(pairs).astype(np.float32) / 127.5 - 1.0
+    mask_plane = np.broadcast_to(
+        (mask.astype(np.float32) / 255.0)[None, None, ...], (len(pairs), 1, *mask.shape)
+    )
+    stacked = np.concatenate([images, mask_plane], axis=1)
+    tensor = torch.from_numpy(np.ascontiguousarray(stacked)).to(device)
     with torch.no_grad():
         outputs = model(tensor)
     return outputs.cpu().numpy() * TARGET_SCALE_RAD_S
@@ -60,43 +69,36 @@ def estimate_gyro_ml(
     """Estimate per-frame angular velocities with the trained network."""
     device = select_device(device_name)
     model, _ = load_model(checkpoint_path, device)
-    fps = read_frame_rate(video_path)
-
-    capture = cv2.VideoCapture(str(video_path))
-    if not capture.isOpened():
-        raise VideoError(f"cannot open video {video_path}")
+    source = VideoFrameSource(video_path)
 
     projector: CanonicalProjector | None = None
     previous: np.ndarray | None = None
     pending: list[np.ndarray] = []
     predictions: list[np.ndarray] = []
 
-    try:
-        while True:
-            ok, frame = capture.read()
-            if not ok:
-                break
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            if projector is None:
-                projector = CanonicalProjector.build(profile, gray.shape[1], gray.shape[0])
-            current = projector.remap(gray)
+    for frame in source:
+        if projector is None:
+            projector = CanonicalProjector.build(
+                profile, frame.gray.shape[1], frame.gray.shape[0]
+            )
+        current = projector.remap(frame.gray)
 
-            if previous is not None:
-                pending.append(np.stack([previous, current]))
-                if len(pending) == batch_size:
-                    predictions.append(_predict_batch(model, pending, device))
-                    pending = []
-            previous = current
+        if previous is not None:
+            pending.append(np.stack([previous, current]))
+            if len(pending) == batch_size:
+                predictions.append(
+                    _predict_batch(model, pending, projector.mask_image(), device)
+                )
+                pending = []
+        previous = current
 
-        if pending:
-            predictions.append(_predict_batch(model, pending, device))
-    finally:
-        capture.release()
+    if pending and projector is not None:
+        predictions.append(_predict_batch(model, pending, projector.mask_image(), device))
 
     if not predictions:
-        raise VideoError(f"video {video_path} has fewer than 2 frames")
+        raise FrameSourceError(f"video {video_path} has fewer than 2 frames")
 
     return GyroEstimate(
         angular_velocities=np.concatenate(predictions, axis=0),
-        sample_rate_hz=fps,
+        sample_rate_hz=source.frame_rate,
     )

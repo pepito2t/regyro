@@ -11,26 +11,27 @@ PROP_WEDGE_MAX = 3
 PROP_WEDGE_MAX_DEG = 50.0
 
 
-def roll_pair(
-    frame_a: np.ndarray,
-    frame_b: np.ndarray,
+def roll_images(
+    images: list[np.ndarray],
     target: np.ndarray,
     angle_deg: float,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Roll both frames about the optical axis and rotate the target to match.
+) -> tuple[list[np.ndarray], np.ndarray]:
+    """Roll every plane about the optical axis and rotate the target to match.
 
     Under the canonical equidistant projection a camera roll is exactly an image
     rotation, so this is a geometrically valid way to multiply roll examples.
     cv2 moves content from azimuth phi to phi - angle, which corresponds to
     expressing the same motion in a camera frame rotated by -angle about z.
+    The validity mask is rolled with the frames so it keeps describing them.
     """
-    size = frame_a.shape[0]
+    size = images[0].shape[0]
     center = ((size - 1) / 2.0, (size - 1) / 2.0)
     matrix = cv2.getRotationMatrix2D(center, angle_deg, 1.0)
-    rotated_a = cv2.warpAffine(frame_a, matrix, (size, size), flags=cv2.INTER_LINEAR)
-    rotated_b = cv2.warpAffine(frame_b, matrix, (size, size), flags=cv2.INTER_LINEAR)
+    rotated = [
+        cv2.warpAffine(image, matrix, (size, size), flags=cv2.INTER_LINEAR) for image in images
+    ]
     frame_rotation = Rotation.from_rotvec([0.0, 0.0, -np.deg2rad(angle_deg)])
-    return rotated_a, rotated_b, frame_rotation.apply(target)
+    return rotated, frame_rotation.apply(target)
 
 
 def apply_exposure(frames: list[np.ndarray], rng: np.random.Generator) -> list[np.ndarray]:

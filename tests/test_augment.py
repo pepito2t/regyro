@@ -14,7 +14,7 @@ from regyro.model.augment import (
     apply_motion_blur,
     apply_noise,
     apply_prop_mask,
-    roll_pair,
+    roll_images,
 )
 
 SIZE = 65
@@ -32,7 +32,7 @@ def test_cv2_rotation_moves_azimuth_negatively():
     image[int(CENTER), int(CENTER) + 20] = 255  # azimuth 0 degrees
     target = np.zeros(3)
 
-    rotated, _, _ = roll_pair(image, image, target, angle_deg=30.0)
+    (rotated, _), _ = roll_images([image, image], target, angle_deg=30.0)
 
     np.testing.assert_allclose(azimuth_of_brightest(rotated), -30.0, atol=4.0)
 
@@ -41,7 +41,7 @@ def test_roll_target_uses_negative_z_rotation():
     image = np.zeros((SIZE, SIZE), dtype=np.uint8)
     target = np.array([1.0, 0.0, 0.0])
 
-    _, _, rotated_target = roll_pair(image, image, target, angle_deg=90.0)
+    _, rotated_target = roll_images([image, image], target, angle_deg=90.0)
 
     np.testing.assert_allclose(rotated_target, [0.0, -1.0, 0.0], atol=1e-9)
 
@@ -51,7 +51,7 @@ def test_roll_leaves_pure_roll_target_unchanged():
     image = np.zeros((SIZE, SIZE), dtype=np.uint8)
     target = np.array([0.0, 0.0, 2.5])
 
-    _, _, rotated_target = roll_pair(image, image, target, angle_deg=37.0)
+    _, rotated_target = roll_images([image, image], target, angle_deg=37.0)
 
     np.testing.assert_allclose(rotated_target, target, atol=1e-9)
 
@@ -65,7 +65,7 @@ def test_roll_is_consistent_with_a_synthetic_pure_roll():
     frame_b = cv2.warpAffine(frame_a, matrix, (SIZE, SIZE))
     target = np.array([0.0, 0.0, np.deg2rad(roll_deg)])
 
-    augmented_a, augmented_b, augmented_target = roll_pair(frame_a, frame_b, target, 55.0)
+    (augmented_a, augmented_b), augmented_target = roll_images([frame_a, frame_b], target, 55.0)
 
     # The relative motion between the two augmented frames is still the same roll.
     expected_b = cv2.warpAffine(
@@ -86,7 +86,7 @@ def test_target_rotation_matches_matrix_conjugation():
     angle = 41.0
     image = np.zeros((SIZE, SIZE), dtype=np.uint8)
 
-    _, _, rotated_target = roll_pair(image, image, target, angle)
+    _, rotated_target = roll_images([image, image], target, angle)
 
     expected = Rotation.from_rotvec([0.0, 0.0, -np.deg2rad(angle)]).apply(target)
     np.testing.assert_allclose(rotated_target, expected, atol=1e-12)

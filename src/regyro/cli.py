@@ -1,10 +1,20 @@
 import argparse
 import logging
 import sys
+from dataclasses import asdict
 from pathlib import Path
 
 from regyro.classical.video_pipeline import estimate_gyro
-from regyro.dataset.build import DatasetError, build_dataset
+from regyro.dataset.asl import load_sequence
+from regyro.dataset.build import (
+    DatasetError,
+    ShardStats,
+    append_manifest,
+    build_dataset,
+    build_from_source,
+)
+from regyro.dataset.kalibr import load_calibration
+from regyro.dataset.rosbag_source import load_bag
 from regyro.dataset.sync import calibrate_video
 from regyro.errors import RegyroError
 from regyro.gcsv import write_gcsv
@@ -51,6 +61,17 @@ def build_parser() -> argparse.ArgumentParser:
     build.add_argument("videos", type=Path, nargs="+")
     build.add_argument("--lens", type=Path, required=True)
     build.add_argument("--output", "-o", type=Path, required=True, help="Shard output directory")
+
+    importer = subparsers.add_parser(
+        "import-dataset", help="Import public research datasets into training shards"
+    )
+    importer.add_argument("paths", type=Path, nargs="+", help="ASL sequence dirs or .bag files")
+    importer.add_argument("--format", choices=("asl", "rosbag"), required=True)
+    importer.add_argument("--output", "-o", type=Path, required=True)
+    importer.add_argument("--camera", default="cam0", help="Camera to use within the sequence")
+    importer.add_argument("--calibration", type=Path, help="Kalibr YAML, required for rosbag")
+    importer.add_argument("--image-topic", help="Image topic if the bag holds several")
+    importer.add_argument("--imu-topic", help="IMU topic if the bag holds several")
 
     train = subparsers.add_parser("train", help="Train the rotation model on built shards")
     train.add_argument("--data", type=Path, required=True, help="Shard directory")
@@ -109,6 +130,43 @@ def run_build_dataset(args: argparse.Namespace) -> int:
     return 0 if stats.frame_pairs else 1
 
 
+def _import_one(args: argparse.Namespace, path: Path) -> ShardStats:
+    if args.format == "asl":
+        sequence = load_sequence(path, args.camera)
+        return build_from_source(sequence.source, sequence.profile, sequence.gyro, args.output)
+
+    if args.calibration is None:
+        raise DatasetError("--format rosbag requires --calibration (Kalibr YAML)")
+    calibration = load_calibration(args.calibration, args.camera)
+    bag = load_bag(path, args.image_topic, args.imu_topic)
+    gyro = bag.gyro.rotate(calibration.rotation_cam_imu)
+    return build_from_source(bag.source, calibration.profile, gyro, args.output)
+
+
+def run_import_dataset(args: argparse.Namespace) -> int:
+    total = ShardStats(shards=0, frame_pairs=0, skipped_videos=0)
+    entries = []
+
+    for path in args.paths:
+        try:
+            stats = _import_one(args, path)
+        except RegyroError as exc:
+            print(f"skipping {path.name}: {exc}", file=sys.stderr)
+            total.skipped_videos += 1
+            continue
+        total.shards += stats.shards
+        total.frame_pairs += stats.frame_pairs
+        entries.append({"source": path.name, **asdict(stats)})
+        print(f"{path.name}: {stats.shards} shards, {stats.frame_pairs} pairs")
+
+    append_manifest(args.output, entries)
+    print(
+        f"total: {total.shards} shards, {total.frame_pairs} frame pairs, "
+        f"{total.skipped_videos} skipped -> {args.output}"
+    )
+    return 0 if total.frame_pairs else 1
+
+
 def run_train(args: argparse.Namespace) -> int:
     _require_torch()
     from regyro.model.train import TrainConfig, train
@@ -131,6 +189,7 @@ COMMANDS = {
     "estimate": run_estimate,
     "calibrate": run_calibrate,
     "build-dataset": run_build_dataset,
+    "import-dataset": run_import_dataset,
     "train": run_train,
 }
 

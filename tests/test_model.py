@@ -3,7 +3,7 @@ import pytest
 import torch
 
 from regyro.model.data import DataError, ShardDataset, split_shards_by_video
-from regyro.model.network import RotationNet, count_parameters
+from regyro.model.network import INPUT_CHANNELS, RotationNet, count_parameters
 from regyro.model.train import TrainConfig, amp_is_worthwhile, select_device, train
 
 FRAME_SIZE = 64
@@ -14,8 +14,12 @@ def write_shard(directory, stem: str, index: int, seed: int) -> None:
     rng = np.random.default_rng(seed)
     frames = (rng.random((FRAMES_PER_SHARD, FRAME_SIZE, FRAME_SIZE)) * 255).astype(np.uint8)
     targets = rng.normal(scale=1.5, size=(FRAMES_PER_SHARD - 1, 3)).astype(np.float32)
+    mask = np.full((FRAME_SIZE, FRAME_SIZE), 255, dtype=np.uint8)
     np.savez_compressed(
-        directory / f"{stem}-{index:05d}.npz", frames=frames, angular_velocity=targets
+        directory / f"{stem}-{index:05d}.npz",
+        frames=frames,
+        angular_velocity=targets,
+        valid_mask=mask,
     )
 
 
@@ -29,7 +33,7 @@ def shard_dir(tmp_path):
 
 def test_network_output_shape():
     model = RotationNet()
-    batch = torch.zeros(3, 2, FRAME_SIZE, FRAME_SIZE)
+    batch = torch.zeros(3, INPUT_CHANNELS, FRAME_SIZE, FRAME_SIZE)
 
     assert model(batch).shape == (3, 3)
 
@@ -66,7 +70,7 @@ def test_dataset_yields_normalised_pairs(shard_dir):
 
     frames, target = next(iter(dataset))
 
-    assert frames.shape == (2, FRAME_SIZE, FRAME_SIZE)
+    assert frames.shape == (INPUT_CHANNELS, FRAME_SIZE, FRAME_SIZE)
     assert frames.dtype == torch.float32
     assert -1.01 <= float(frames.min()) and float(frames.max()) <= 1.01
     assert target.shape == (3,)

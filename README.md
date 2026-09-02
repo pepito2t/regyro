@@ -23,11 +23,15 @@ uv run regyro calibrate flight.mp4 --lens lens-profile.json
 uv run regyro build-dataset rushes/*.mp4 --lens lens-profile.json -o data/shards
 
 # Add public research datasets to the same shard directory
-uv run regyro import-dataset euroc/MH_01/ --format asl -o data/shards
-uv run regyro import-dataset uzh/*.bag --format rosbag --calibration camchain.yaml -o data/shards
+uv run regyro import-dataset euroc/MH_01/ --format asl --license cc-by-3.0 -o data/shards
+uv run regyro import-dataset uzh/*.bag --format rosbag --calibration camchain.yaml \
+    --license cc-by-nc-sa-3.0 -o data/shards
 
 # Train
 uv run regyro train --data data/shards -o model.pt --epochs 30
+
+# Describe a trained checkpoint, ready to publish alongside it
+uv run regyro model-card model.pt
 
 # Measure either method against the real embedded gyro
 uv run python scripts/evaluate.py flight.mp4 --lens lens-profile.json
@@ -44,6 +48,12 @@ uv run python scripts/evaluate.py flight.mp4 --lens lens-profile.json
 **Validation split by video, not by pair.** Consecutive frames are near-duplicates; splitting at pair level would leak validation into training and report a meaningless score.
 
 **Roll augmentation.** Under the canonical projection a camera roll is exactly an image rotation, so rolling both frames and rotating the target is a geometrically valid way to multiply the fast-roll examples that FPV footage is short on. The sign conventions are pinned by tests in `tests/test_augment.py`.
+
+## Licensing of trained weights
+
+Training data licences propagate to the model. UZH-FPV is CC BY-NC-SA, so a checkpoint that saw it inherits non-commercial and share-alike terms and cannot be published as unrestricted. Record a `--license` on every import: it is stored in the shard manifest, aggregated into the checkpoint at training time, and stated in the generated model card. Training warns when restricted data is present, and an unrecorded licence is treated as blocking rather than permissive.
+
+To publish a checkpoint freely, train it only on your own footage and permissively licensed datasets.
 
 ## Hardware note
 

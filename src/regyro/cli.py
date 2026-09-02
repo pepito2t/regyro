@@ -14,6 +14,7 @@ from regyro.dataset.build import (
     build_from_source,
 )
 from regyro.dataset.kalibr import load_calibration
+from regyro.dataset.provenance import UNKNOWN_LICENSE
 from regyro.dataset.rosbag_source import load_bag
 from regyro.dataset.sync import calibrate_video
 from regyro.errors import RegyroError
@@ -69,9 +70,21 @@ def build_parser() -> argparse.ArgumentParser:
     importer.add_argument("--format", choices=("asl", "rosbag"), required=True)
     importer.add_argument("--output", "-o", type=Path, required=True)
     importer.add_argument("--camera", default="cam0", help="Camera to use within the sequence")
+    importer.add_argument(
+        "--license",
+        default=UNKNOWN_LICENSE,
+        help="Licence of the imported data, e.g. cc-by-nc-sa-3.0; recorded in the manifest",
+    )
     importer.add_argument("--calibration", type=Path, help="Kalibr YAML, required for rosbag")
     importer.add_argument("--image-topic", help="Image topic if the bag holds several")
     importer.add_argument("--imu-topic", help="IMU topic if the bag holds several")
+
+    card = subparsers.add_parser(
+        "model-card", help="Write a model card describing a trained checkpoint"
+    )
+    card.add_argument("checkpoint", type=Path)
+    card.add_argument("--output", "-o", type=Path, help="Output .md (default: alongside)")
+    card.add_argument("--name", default="regyro", help="Model name used in the card")
 
     train = subparsers.add_parser("train", help="Train the rotation model on built shards")
     train.add_argument("--data", type=Path, required=True, help="Shard directory")
@@ -156,7 +169,7 @@ def run_import_dataset(args: argparse.Namespace) -> int:
             continue
         total.shards += stats.shards
         total.frame_pairs += stats.frame_pairs
-        entries.append({"source": path.name, **asdict(stats)})
+        entries.append({"source": path.name, "license": args.license, **asdict(stats)})
         print(f"{path.name}: {stats.shards} shards, {stats.frame_pairs} pairs")
 
     append_manifest(args.output, entries)
@@ -165,6 +178,23 @@ def run_import_dataset(args: argparse.Namespace) -> int:
         f"{total.skipped_videos} skipped -> {args.output}"
     )
     return 0 if total.frame_pairs else 1
+
+
+def run_model_card(args: argparse.Namespace) -> int:
+    _require_torch()
+    import torch
+
+    from regyro.model.model_card import write
+
+    try:
+        checkpoint = torch.load(args.checkpoint, map_location="cpu", weights_only=True)
+    except (OSError, RuntimeError) as exc:
+        raise DatasetError(f"cannot read checkpoint {args.checkpoint}: {exc}") from exc
+
+    output = args.output or args.checkpoint.with_suffix(".md")
+    write(output, checkpoint, args.name)
+    print(f"wrote {output}")
+    return 0
 
 
 def run_train(args: argparse.Namespace) -> int:
@@ -190,6 +220,7 @@ COMMANDS = {
     "calibrate": run_calibrate,
     "build-dataset": run_build_dataset,
     "import-dataset": run_import_dataset,
+    "model-card": run_model_card,
     "train": run_train,
 }
 

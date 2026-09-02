@@ -14,6 +14,7 @@ from regyro.dataset.telemetry import (
     integrate_between_frames,
     load_gyro,
 )
+from regyro.dataset.provenance import OWN_FOOTAGE_LICENSE
 from regyro.errors import RegyroError
 from regyro.lens_profile import LensProfile
 
@@ -159,6 +160,7 @@ def build_dataset(
     videos: list[Path],
     profile: LensProfile,
     output_dir: Path,
+    license_name: str = OWN_FOOTAGE_LICENSE,
 ) -> ShardStats:
     """Build shards for every video, skipping the ones that cannot be synchronised."""
     total = ShardStats(shards=0, frame_pairs=0, skipped_videos=0)
@@ -173,7 +175,7 @@ def build_dataset(
             continue
         total.shards += stats.shards
         total.frame_pairs += stats.frame_pairs
-        manifest.append({"source": video.name, **asdict(stats)})
+        manifest.append({"source": video.name, "license": license_name, **asdict(stats)})
         logger.info("%s: %d shards, %d pairs", video.name, stats.shards, stats.frame_pairs)
 
     append_manifest(output_dir, manifest)

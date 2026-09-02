@@ -8,6 +8,7 @@ from torch import nn
 from torch.utils.data import DataLoader
 
 from regyro.dataset.canonical import CANONICAL_FOV_DEG, CANONICAL_SIZE
+from regyro.dataset.provenance import Provenance, describe
 from regyro.model.data import ShardDataset, split_shards_by_video
 from regyro.model.network import TARGET_SCALE_RAD_S, RotationNet, count_parameters
 
@@ -90,8 +91,26 @@ def _run_epoch(
     return total_loss / total_samples
 
 
+def _report_provenance(data_dir: Path) -> Provenance:
+    provenance = describe(data_dir)
+    logger.info("training data: %s", ", ".join(provenance.sources) or "unrecorded")
+    if provenance.restricted_licenses:
+        logger.warning(
+            "training data includes non-commercial licences (%s); the resulting "
+            "checkpoint inherits those terms and must not be published as unrestricted",
+            ", ".join(provenance.restricted_licenses),
+        )
+    if provenance.share_alike_licenses:
+        logger.warning(
+            "training data includes share-alike licences (%s)",
+            ", ".join(provenance.share_alike_licenses),
+        )
+    return provenance
+
+
 def train(config: TrainConfig) -> Path:
     device = select_device(config.device)
+    provenance = _report_provenance(config.data_dir)
     split = split_shards_by_video(config.data_dir, config.val_fraction, config.seed)
     logger.info(
         "device %s | %d train shards | %d val shards",
@@ -135,13 +154,20 @@ def train(config: TrainConfig) -> Path:
         )
         if val_loss < best_loss:
             best_loss = val_loss
-            save_checkpoint(config.output, model, epoch, val_loss)
+            save_checkpoint(config.output, model, epoch, val_loss, provenance)
             logger.info("saved checkpoint to %s", config.output)
 
     return config.output
 
 
-def save_checkpoint(path: Path, model: nn.Module, epoch: int, val_loss: float) -> None:
+def save_checkpoint(
+    path: Path,
+    model: nn.Module,
+    epoch: int,
+    val_loss: float,
+    provenance: Provenance | None = None,
+) -> None:
+    provenance = provenance or Provenance(sources=[], licenses=[])
     torch.save(
         {
             "state_dict": model.state_dict(),
@@ -150,6 +176,8 @@ def save_checkpoint(path: Path, model: nn.Module, epoch: int, val_loss: float) -
             "target_scale_rad_s": TARGET_SCALE_RAD_S,
             "canonical_size": CANONICAL_SIZE,
             "canonical_fov_deg": CANONICAL_FOV_DEG,
+            "training_sources": provenance.sources,
+            "training_licenses": provenance.licenses,
         },
         path,
     )
